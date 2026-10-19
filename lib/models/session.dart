@@ -22,8 +22,7 @@ class DiscoveredDevice {
 
   String get modelName => productTitleForVendor(advertisement.vendorId);
 
-  String get displayName =>
-      name.isNotEmpty && name != id ? name : modelName;
+  String get displayName => name.isNotEmpty && name != id ? name : modelName;
 
   int get vendorId => advertisement.vendorId;
 }
@@ -112,6 +111,7 @@ class DeviceSession {
     this.battery,
     this.firmware,
     this.ancMode,
+    this.ancLevel,
     this.settings = const DeviceSettings(),
     this.errorMessage,
     this.statusMessage,
@@ -122,6 +122,7 @@ class DeviceSession {
   final BatteryLevels? battery;
   final FirmwareVersion? firmware;
   final AncMode? ancMode;
+  final int? ancLevel;
   final DeviceSettings settings;
   final String? errorMessage;
   final String? statusMessage;
@@ -138,6 +139,7 @@ class DeviceSession {
     BatteryLevels? battery,
     FirmwareVersion? firmware,
     AncMode? ancMode,
+    int? ancLevel,
     DeviceSettings? settings,
     String? errorMessage,
     String? statusMessage,
@@ -150,10 +152,10 @@ class DeviceSession {
       battery: battery ?? this.battery,
       firmware: firmware ?? this.firmware,
       ancMode: ancMode ?? this.ancMode,
+      ancLevel: ancLevel ?? this.ancLevel,
       settings: settings ?? this.settings,
       errorMessage: clearError ? null : (errorMessage ?? this.errorMessage),
-      statusMessage:
-          clearStatus ? null : (statusMessage ?? this.statusMessage),
+      statusMessage: clearStatus ? null : (statusMessage ?? this.statusMessage),
     );
   }
 }

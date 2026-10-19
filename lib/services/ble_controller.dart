@@ -407,13 +407,16 @@ class BleController extends ChangeNotifier {
     if (_session == null) return;
     var settings = _session!.settings;
     AncMode? anc = _session!.ancMode;
+    int? ancLevel = _session!.ancLevel;
     BatteryLevels? battery = _session!.battery;
 
     for (final cmd in parsePacket(data)) {
       if (cmd.opcode == 0x17 && cmd.params.length >= 3) {
         anc = AncMode.fromAck(cmd.params[0], cmd.params[1], cmd.params[2]);
+        ancLevel = anc == null ? null : cmd.params[2].clamp(0, anc.levels - 1);
       } else if (cmd.opcode == 0x0c && cmd.params.isNotEmpty) {
         anc = _ancFromSimpleMode(cmd.params[0]);
+        ancLevel = anc?.defaultLevel;
       } else if (cmd.opcode == 0x09 && cmd.params.isNotEmpty) {
         settings =
             settings.copyWith(gameMode: toggleValueFromByte(cmd.params[0]));
@@ -480,6 +483,7 @@ class BleController extends ChangeNotifier {
 
     _session = _session!.copyWith(
       ancMode: anc,
+      ancLevel: ancLevel,
       settings: settings,
       battery: battery,
     );
@@ -610,8 +614,8 @@ class BleController extends ChangeNotifier {
     return FirmwareVersion.fromBytes(data);
   }
 
-  Future<void> setAncMode(AncMode mode) async {
-    await _send(buildAncCommand(mode));
+  Future<void> setAncMode(AncMode mode, [int? level]) async {
+    await _send(buildAncCommand(mode, level));
     await Future<void>.delayed(const Duration(milliseconds: 200));
     await _send(buildRequestDataCommand(0x17));
     await Future<void>.delayed(const Duration(milliseconds: 150));

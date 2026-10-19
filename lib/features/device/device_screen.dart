@@ -36,11 +36,12 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     }
   }
 
-  Future<void> _setAnc(AncMode mode) async {
+  Future<void> _setAnc(AncMode mode, [int? level]) async {
     if (_ancBusy) return;
     setState(() => _ancBusy = true);
     HapticFeedback.lightImpact();
-    await _run(() => ref.read(bleControllerProvider).setAncMode(mode), 'ANC');
+    await _run(() => ref.read(bleControllerProvider).setAncMode(mode, level),
+        'ANC');
     if (mounted) setState(() => _ancBusy = false);
   }
 
@@ -213,6 +214,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
               padding: const EdgeInsets.all(16),
               child: AncSelector(
                 selected: session.ancMode,
+                level: session.ancLevel,
                 busy: _ancBusy || !interactive,
                 onSelected: _setAnc,
               ),
