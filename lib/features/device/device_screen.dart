@@ -24,14 +24,51 @@ class DeviceScreen extends ConsumerStatefulWidget {
 class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   bool _ancBusy = false;
 
+  Future<void> _showLdacDiagnostics() async {
+    final ble = ref.read(bleControllerProvider);
+    final diagnostic = ble.ldacDiagnostics;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Diagnóstico LDAC'),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            diagnostic.isEmpty ? 'Sem registros.' : diagnostic,
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: diagnostic));
+            },
+            child: const Text('Copiar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fechar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openBluetoothSettings() async {
+    await _run(
+      () => const MethodChannel(
+        'openqcy/system',
+      ).invokeMethod<void>('openBluetoothSettings'),
+      'Bluetooth',
+    );
+  }
+
   Future<void> _run(Future<void> Function() action, String label) async {
     try {
       await action();
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('$label failed: $e')),
-        );
+        ScaffoldMessenger.of(
+          context,
+        ).showSnackBar(SnackBar(content: Text('$label failed: $e')));
       }
     }
   }
@@ -40,8 +77,10 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     if (_ancBusy) return;
     setState(() => _ancBusy = true);
     HapticFeedback.lightImpact();
-    await _run(() => ref.read(bleControllerProvider).setAncMode(mode, level),
-        'ANC');
+    await _run(
+      () => ref.read(bleControllerProvider).setAncMode(mode, level),
+      'ANC',
+    );
     if (mounted) setState(() => _ancBusy = false);
   }
 
@@ -153,369 +192,394 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     }
 
     final connected = session.phase == ConnectionPhase.connected;
-    final interactive = connected && !session.isBusy;
+    final interactive = connected && !session.isBusy && !ble.ldacBusy;
     final features = featuresForVendor(session.device.vendorId);
     final s = session.settings;
 
     return PopScope(
-      canPop: true,
+      canPop: !ble.ldacBusy,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) {
           ref.read(bleControllerProvider).softDisconnect();
         }
       },
       child: Scaffold(
-      appBar: AppBar(
-        title: Text(session.device.displayName),
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back),
-          onPressed: _goBack,
+        appBar: AppBar(
+          title: Text(session.device.displayName),
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back),
+            onPressed: ble.ldacBusy ? null : _goBack,
+          ),
+          actions: [
+            IconButton(
+              onPressed: interactive ? () => ble.refreshStatus() : null,
+              icon: const Icon(Icons.refresh),
+            ),
+            IconButton(
+              onPressed: () => context.push('/settings'),
+              icon: const Icon(Icons.settings_outlined),
+            ),
+            IconButton(
+              onPressed: connected && !ble.ldacBusy ? _disconnect : null,
+              icon: const Icon(Icons.link_off),
+              tooltip: 'Disconnect',
+            ),
+          ],
         ),
-        actions: [
-          IconButton(
-            onPressed: interactive ? () => ble.refreshStatus() : null,
-            icon: const Icon(Icons.refresh),
-          ),
-          IconButton(
-            onPressed: () => context.push('/settings'),
-            icon: const Icon(Icons.settings_outlined),
-          ),
-          IconButton(
-            onPressed: connected ? _disconnect : null,
-            icon: const Icon(Icons.link_off),
-            tooltip: 'Disconnect',
-          ),
-        ],
-      ),
-      body: ListView(
-        padding: const EdgeInsets.all(20),
-        children: [
-          _StatusBanner(session: session),
-          const SizedBox(height: 20),
-          _BatteryCard(battery: session.battery),
-          if (session.firmware != null) ...[
-            const SizedBox(height: 8),
-            Text(
-              'Firmware L ${session.firmware!.left}'
-              '${session.firmware!.right != null ? ' · R ${session.firmware!.right}' : ''}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: scheme.onSurfaceVariant,
-                  ),
-              textAlign: TextAlign.center,
-            ),
-          ],
-          const SizedBox(height: 24),
-          const SectionHeader(
-            title: 'Noise control',
-            subtitle: 'You should hear the voice prompt on change.',
-          ),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: AncSelector(
-                selected: session.ancMode,
-                level: session.ancLevel,
-                busy: _ancBusy || !interactive,
-                onSelected: _setAnc,
+        body: ListView(
+          padding: const EdgeInsets.all(20),
+          children: [
+            _StatusBanner(session: session),
+            const SizedBox(height: 20),
+            _BatteryCard(battery: session.battery),
+            if (session.firmware != null) ...[
+              const SizedBox(height: 8),
+              Text(
+                'Firmware L ${session.firmware!.left}'
+                '${session.firmware!.right != null ? ' · R ${session.firmware!.right}' : ''}',
+                style: Theme.of(
+                  context,
+                ).textTheme.bodySmall?.copyWith(color: scheme.onSurfaceVariant),
+                textAlign: TextAlign.center,
               ),
-            ),
-          ),
-          const SizedBox(height: 24),
-          const SectionHeader(title: 'Equalizer'),
-          Card(
-            child: Padding(
-              padding: const EdgeInsets.all(16),
-              child: EqPresetSelector(
-                presets: features.eqPresets,
-                selectedIndex: s.eqPresetIndex,
-                enabled: interactive,
-                onSelected: (i) => _run(
-                  () => ref.read(bleControllerProvider).setEqPreset(i),
-                  'EQ',
-                ),
-              ),
-            ),
-          ),
-          if (features.eq != null) ...[
-            const SizedBox(height: 8),
-            Align(
-              alignment: Alignment.centerRight,
-              child: TextButton.icon(
-                onPressed: interactive
-                    ? () => context.push('/device/eq')
-                    : null,
-                icon: const Icon(Icons.tune),
-                label: const Text('Customize bands'),
-              ),
-            ),
-          ],
-          const SizedBox(height: 24),
-          const SectionHeader(title: 'Audio'),
-          SettingsCard(
-            children: [
-              ListTile(
-                title: const Text('Volume'),
-                subtitle: Text('L ${s.volumeLeft}% · R ${s.volumeRight}%'),
-              ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
-                child: Row(
-                  children: [
-                    Expanded(
-                      child: Slider(
-                        value: s.volumeLeft.toDouble(),
-                        min: 0,
-                        max: 100,
-                        divisions: 100,
-                        label: 'L ${s.volumeLeft}',
-                        onChanged: interactive
-                            ? (v) => ref
-                                .read(bleControllerProvider)
-                                .setVolume(v.round(), s.volumeRight)
-                            : null,
-                      ),
-                    ),
-                    Expanded(
-                      child: Slider(
-                        value: s.volumeRight.toDouble(),
-                        min: 0,
-                        max: 100,
-                        divisions: 100,
-                        label: 'R ${s.volumeRight}',
-                        onChanged: interactive
-                            ? (v) => ref
-                                .read(bleControllerProvider)
-                                .setVolume(s.volumeLeft, v.round())
-                            : null,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (features.channelBalance)
-                ListTile(
-                  title: const Text('Channel balance'),
-                  subtitle: Slider(
-                    value: s.soundBalance.toDouble(),
-                    min: 0,
-                    max: 100,
-                    divisions: 100,
-                    label: s.soundBalance == 50
-                        ? 'Center'
-                        : s.soundBalance < 50
-                            ? 'Left'
-                            : 'Right',
-                    onChanged: interactive
-                        ? (v) => ref
-                            .read(bleControllerProvider)
-                            .setSoundBalance(v.round())
-                        : null,
-                  ),
-                ),
             ],
-          ),
-          const SizedBox(height: 24),
-          if (features.hasKeyFunctions) ...[
-            const SectionHeader(
-              title: 'Controls',
-              subtitle: 'Customize touch gestures per earbud.',
-            ),
-            SettingsCard(
-              children: [
-                ListTile(
-                  leading: const Icon(Icons.touch_app_outlined),
-                  title: const Text('Touch controls'),
-                  subtitle: const Text('Single, double, and triple tap'),
-                  trailing: const Icon(Icons.chevron_right),
-                  onTap: interactive
-                      ? () => context.push('/device/keys')
-                      : null,
-                ),
-              ],
-            ),
             const SizedBox(height: 24),
-          ],
-          if (features.autoOffTimer != null) ...[
             const SectionHeader(
-              title: 'Power',
-              subtitle: 'Auto power-off when idle.',
+              title: 'Noise control',
+              subtitle: 'You should hear the voice prompt on change.',
             ),
             Card(
               child: Padding(
                 padding: const EdgeInsets.all(16),
-                child: AutoOffSelector(
-                  selectedMinutes: s.autoOffMinutes,
-                  disabledMinutes: features.autoOffTimer!.disabledMinutes,
-                  enabled: interactive,
-                  onSelected: (m) => _run(
-                    () => ref.read(bleControllerProvider).setAutoOffMinutes(m),
-                    'Auto power-off',
-                  ),
+                child: AncSelector(
+                  selected: session.ancMode,
+                  level: session.ancLevel,
+                  busy: _ancBusy || !interactive,
+                  onSelected: _setAnc,
                 ),
               ),
             ),
             const SizedBox(height: 24),
-          ],
-          const SectionHeader(title: 'Features'),
-          SettingsCard(
-            children: [
-              SwitchListTile(
-                title: const Text('Gaming mode'),
-                subtitle: const Text('Low latency'),
-                value: s.gameMode,
-                onChanged: interactive
-                    ? (v) => _run(
+            const SectionHeader(title: 'Equalizer'),
+            Card(
+              child: Padding(
+                padding: const EdgeInsets.all(16),
+                child: EqPresetSelector(
+                  presets: features.eqPresets,
+                  selectedIndex: s.eqPresetIndex,
+                  enabled: interactive,
+                  onSelected: (i) => _run(
+                    () => ref.read(bleControllerProvider).setEqPreset(i),
+                    'EQ',
+                  ),
+                ),
+              ),
+            ),
+            if (features.eq != null) ...[
+              const SizedBox(height: 8),
+              Align(
+                alignment: Alignment.centerRight,
+                child: TextButton.icon(
+                  onPressed: interactive
+                      ? () => context.push('/device/eq')
+                      : null,
+                  icon: const Icon(Icons.tune),
+                  label: const Text('Customize bands'),
+                ),
+              ),
+            ],
+            const SizedBox(height: 24),
+            const SectionHeader(title: 'Audio'),
+            SettingsCard(
+              children: [
+                ListTile(
+                  title: const Text('Volume'),
+                  subtitle: Text('L ${s.volumeLeft}% · R ${s.volumeRight}%'),
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: Slider(
+                          value: s.volumeLeft.toDouble(),
+                          min: 0,
+                          max: 100,
+                          divisions: 100,
+                          label: 'L ${s.volumeLeft}',
+                          onChanged: interactive
+                              ? (v) => ref
+                                    .read(bleControllerProvider)
+                                    .setVolume(v.round(), s.volumeRight)
+                              : null,
+                        ),
+                      ),
+                      Expanded(
+                        child: Slider(
+                          value: s.volumeRight.toDouble(),
+                          min: 0,
+                          max: 100,
+                          divisions: 100,
+                          label: 'R ${s.volumeRight}',
+                          onChanged: interactive
+                              ? (v) => ref
+                                    .read(bleControllerProvider)
+                                    .setVolume(s.volumeLeft, v.round())
+                              : null,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                if (features.channelBalance)
+                  ListTile(
+                    title: const Text('Channel balance'),
+                    subtitle: Slider(
+                      value: s.soundBalance.toDouble(),
+                      min: 0,
+                      max: 100,
+                      divisions: 100,
+                      label: s.soundBalance == 50
+                          ? 'Center'
+                          : s.soundBalance < 50
+                          ? 'Left'
+                          : 'Right',
+                      onChanged: interactive
+                          ? (v) => ref
+                                .read(bleControllerProvider)
+                                .setSoundBalance(v.round())
+                          : null,
+                    ),
+                  ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            if (features.hasKeyFunctions) ...[
+              const SectionHeader(
+                title: 'Controls',
+                subtitle: 'Customize touch gestures per earbud.',
+              ),
+              SettingsCard(
+                children: [
+                  ListTile(
+                    leading: const Icon(Icons.touch_app_outlined),
+                    title: const Text('Touch controls'),
+                    subtitle: const Text('Single, double, and triple tap'),
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: interactive
+                        ? () => context.push('/device/keys')
+                        : null,
+                  ),
+                ],
+              ),
+              const SizedBox(height: 24),
+            ],
+            if (features.autoOffTimer != null) ...[
+              const SectionHeader(
+                title: 'Power',
+                subtitle: 'Auto power-off when idle.',
+              ),
+              Card(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: AutoOffSelector(
+                    selectedMinutes: s.autoOffMinutes,
+                    disabledMinutes: features.autoOffTimer!.disabledMinutes,
+                    enabled: interactive,
+                    onSelected: (m) => _run(
+                      () =>
+                          ref.read(bleControllerProvider).setAutoOffMinutes(m),
+                      'Auto power-off',
+                    ),
+                  ),
+                ),
+              ),
+              const SizedBox(height: 24),
+            ],
+            const SectionHeader(title: 'Features'),
+            SettingsCard(
+              children: [
+                SwitchListTile(
+                  title: const Text('Gaming mode'),
+                  subtitle: const Text('Low latency'),
+                  value: s.gameMode,
+                  onChanged: interactive
+                      ? (v) => _run(
                           () => ref.read(bleControllerProvider).setGameMode(v),
                           'Game mode',
                         )
-                    : null,
-              ),
-              if (features.ldac)
-                SwitchListTile(
-                  title: const Text('LDAC'),
-                  subtitle: const Text('High quality codec'),
-                  value: s.ldac,
-                  onChanged: interactive
-                      ? (v) => _run(
+                      : null,
+                ),
+                if (features.ldac)
+                  SwitchListTile(
+                    title: const Text('LDAC — tentativa direta'),
+                    subtitle: Text(ble.ldacStatus),
+                    value: s.ldac,
+                    onChanged: interactive
+                        ? (v) => _run(
                             () => ref.read(bleControllerProvider).setLdac(v),
                             'LDAC',
                           )
-                      : null,
-                ),
-              if (features.sleepMode)
-                SwitchListTile(
-                  title: const Text('Sleep mode'),
-                  value: s.sleepMode,
-                  onChanged: interactive
-                      ? (v) => _run(
+                        : null,
+                  ),
+                if (features.ldac && ble.ldacBusy)
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 16),
+                    child: LinearProgressIndicator(),
+                  ),
+                if (features.ldac)
+                  ListTile(
+                    title: const Text('Conferir codec no Android'),
+                    subtitle: const Text(
+                      'A preferência do fone e o codec em uso são estados separados.',
+                    ),
+                    trailing: const Icon(Icons.open_in_new),
+                    onTap: _openBluetoothSettings,
+                  ),
+                if (features.ldac)
+                  ListTile(
+                    title: const Text('Diagnóstico LDAC'),
+                    subtitle: const Text(
+                      'Comando enviado, resposta e reconexão',
+                    ),
+                    trailing: const Icon(Icons.article_outlined),
+                    onTap: _showLdacDiagnostics,
+                  ),
+                if (features.sleepMode)
+                  SwitchListTile(
+                    title: const Text('Sleep mode'),
+                    value: s.sleepMode,
+                    onChanged: interactive
+                        ? (v) => _run(
                             () =>
                                 ref.read(bleControllerProvider).setSleepMode(v),
                             'Sleep mode',
                           )
-                      : null,
-                ),
-              if (features.spatialAudio)
-                SwitchListTile(
-                  title: const Text('Spatial audio'),
-                  value: s.spatialAudio,
-                  onChanged: interactive
-                      ? (v) => _run(
+                        : null,
+                  ),
+                if (features.spatialAudio)
+                  SwitchListTile(
+                    title: const Text('Spatial audio'),
+                    value: s.spatialAudio,
+                    onChanged: interactive
+                        ? (v) => _run(
                             () => ref
                                 .read(bleControllerProvider)
                                 .setSpatialAudio(v),
                             'Spatial audio',
                           )
-                      : null,
-                ),
-              if (features.inEarDetection)
-                SwitchListTile(
-                  title: const Text('In-ear detection'),
-                  value: s.inEarDetection,
-                  onChanged: interactive
-                      ? (v) => _run(
+                        : null,
+                  ),
+                if (features.inEarDetection)
+                  SwitchListTile(
+                    title: const Text('In-ear detection'),
+                    value: s.inEarDetection,
+                    onChanged: interactive
+                        ? (v) => _run(
                             () => ref
                                 .read(bleControllerProvider)
                                 .setInEarDetection(v),
                             'In-ear detection',
                           )
-                      : null,
-                ),
-              if (features.dualDevice)
-                SwitchListTile(
-                  title: const Text('Dual device connection'),
-                  value: s.dualDevice,
-                  onChanged: interactive
-                      ? (v) => _run(
-                            () =>
-                                ref.read(bleControllerProvider).setDualDevice(v),
+                        : null,
+                  ),
+                if (features.dualDevice)
+                  SwitchListTile(
+                    title: const Text('Dual device connection'),
+                    value: s.dualDevice,
+                    onChanged: interactive
+                        ? (v) => _run(
+                            () => ref
+                                .read(bleControllerProvider)
+                                .setDualDevice(v),
                             'Dual device',
                           )
+                        : null,
+                  ),
+                if (features.findEarphone)
+                  ListTile(
+                    leading: const Icon(Icons.location_searching),
+                    title: const Text('Find earbuds'),
+                    onTap: interactive ? _showFindEarbuds : null,
+                  ),
+              ],
+            ),
+            const SizedBox(height: 24),
+            const SectionHeader(title: 'Device'),
+            SettingsCard(
+              children: [
+                if (features.deviceRename)
+                  ListTile(
+                    leading: const Icon(Icons.drive_file_rename_outline),
+                    title: const Text('Rename'),
+                    onTap: interactive ? _renameDevice : null,
+                  ),
+                ListTile(
+                  leading: Icon(Icons.restart_alt, color: scheme.error),
+                  title: const Text('Reset to defaults'),
+                  onTap: interactive
+                      ? () async {
+                          if (await confirmAction(
+                            context,
+                            title: 'Reset settings?',
+                            message:
+                                'Restores factory default settings (not pairing).',
+                          )) {
+                            await _run(
+                              () => ref
+                                  .read(bleControllerProvider)
+                                  .resetToDefault(),
+                              'Reset',
+                            );
+                          }
+                        }
                       : null,
                 ),
-              if (features.findEarphone)
                 ListTile(
-                  leading: const Icon(Icons.location_searching),
-                  title: const Text('Find earbuds'),
-                  onTap: interactive ? _showFindEarbuds : null,
-                ),
-            ],
-          ),
-          const SizedBox(height: 24),
-          const SectionHeader(title: 'Device'),
-          SettingsCard(
-            children: [
-              if (features.deviceRename)
-                ListTile(
-                  leading: const Icon(Icons.drive_file_rename_outline),
-                  title: const Text('Rename'),
-                  onTap: interactive ? _renameDevice : null,
-                ),
-              ListTile(
-                leading: Icon(Icons.restart_alt, color: scheme.error),
-                title: const Text('Reset to defaults'),
-                onTap: interactive
-                    ? () async {
-                        if (await confirmAction(
-                          context,
-                          title: 'Reset settings?',
-                          message:
-                              'Restores factory default settings (not pairing).',
-                        )) {
-                          await _run(
-                            () => ref
-                                .read(bleControllerProvider)
-                                .resetToDefault(),
-                            'Reset',
-                          );
+                  leading: Icon(Icons.delete_forever, color: scheme.error),
+                  title: const Text('Factory reset'),
+                  onTap: interactive
+                      ? () async {
+                          if (await confirmAction(
+                            context,
+                            title: 'Factory reset?',
+                            message:
+                                'Clears all settings and pairing. This cannot be undone.',
+                            confirm: 'Reset',
+                            destructive: true,
+                          )) {
+                            await _run(
+                              () => ref
+                                  .read(bleControllerProvider)
+                                  .factoryReset(),
+                              'Factory reset',
+                            );
+                          }
                         }
-                      }
-                    : null,
-              ),
-              ListTile(
-                leading: Icon(Icons.delete_forever, color: scheme.error),
-                title: const Text('Factory reset'),
-                onTap: interactive
-                    ? () async {
-                        if (await confirmAction(
-                          context,
-                          title: 'Factory reset?',
-                          message:
-                              'Clears all settings and pairing. This cannot be undone.',
-                          confirm: 'Reset',
-                          destructive: true,
-                        )) {
-                          await _run(
-                            () => ref
-                                .read(bleControllerProvider)
-                                .factoryReset(),
-                            'Factory reset',
-                          );
-                        }
-                      }
-                    : null,
-              ),
-            ],
-          ),
-          if (session.errorMessage != null) ...[
-            const SizedBox(height: 16),
-            MaterialBanner(
-              content: Text(session.errorMessage!),
-              actions: [
-                TextButton(
-                  onPressed: () => _run(
-                    () => session.phase == ConnectionPhase.error
-                        ? ble.retryReconnect()
-                        : ble.connect(session.device),
-                    'Reconnect',
-                  ),
-                  child: const Text('Retry'),
+                      : null,
                 ),
               ],
             ),
+            if (session.errorMessage != null) ...[
+              const SizedBox(height: 16),
+              MaterialBanner(
+                content: Text(session.errorMessage!),
+                actions: [
+                  TextButton(
+                    onPressed: () => _run(
+                      () => session.phase == ConnectionPhase.error
+                          ? ble.retryReconnect()
+                          : ble.connect(session.device),
+                      'Reconnect',
+                    ),
+                    child: const Text('Retry'),
+                  ),
+                ],
+              ),
+            ],
           ],
-        ],
+        ),
       ),
-    ),
     );
   }
 }
@@ -569,30 +633,30 @@ class _StatusBanner extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final (label, color, icon) = switch (session.phase) {
       ConnectionPhase.connected => (
-          'Connected',
-          scheme.primaryContainer,
-          Icons.link,
-        ),
+        'Connected',
+        scheme.primaryContainer,
+        Icons.link,
+      ),
       ConnectionPhase.connecting => (
-          session.statusMessage ?? 'Connecting…',
-          scheme.secondaryContainer,
-          Icons.bluetooth_connected,
-        ),
+        session.statusMessage ?? 'Connecting…',
+        scheme.secondaryContainer,
+        Icons.bluetooth_connected,
+      ),
       ConnectionPhase.reconnecting => (
-          session.statusMessage ?? 'Reconnecting…',
-          scheme.secondaryContainer,
-          Icons.bluetooth_searching,
-        ),
+        session.statusMessage ?? 'Reconnecting…',
+        scheme.secondaryContainer,
+        Icons.bluetooth_searching,
+      ),
       ConnectionPhase.error => (
-          'Error',
-          scheme.errorContainer,
-          Icons.error_outline,
-        ),
+        'Error',
+        scheme.errorContainer,
+        Icons.error_outline,
+      ),
       ConnectionPhase.disconnected => (
-          'Disconnected',
-          scheme.surfaceContainerHighest,
-          Icons.link_off,
-        ),
+        'Disconnected',
+        scheme.surfaceContainerHighest,
+        Icons.link_off,
+      ),
     };
 
     return AnimatedContainer(
@@ -624,9 +688,9 @@ class _StatusBanner extends StatelessWidget {
           Expanded(
             child: Text(
               label,
-              style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                    fontWeight: FontWeight.w600,
-                  ),
+              style: Theme.of(
+                context,
+              ).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.w600),
             ),
           ),
           Text(

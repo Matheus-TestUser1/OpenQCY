@@ -10,6 +10,7 @@ import '../core/qcy/commands.dart';
 import '../core/qcy/eq.dart';
 import '../core/qcy/guids.dart';
 import '../core/qcy/key_function.dart';
+import '../core/qcy/ldac_change.dart';
 import '../core/qcy/packet.dart';
 import '../models/device_info.dart';
 import '../models/session.dart';
@@ -48,6 +49,21 @@ class BleController extends ChangeNotifier {
   bool _reconnectLoopRunning = false;
   Completer<EqParams?>? _eqReadCompleter;
 
+  final _ldacResponses = StreamController<int>.broadcast(sync: true);
+  final List<String> _ldacLog = [];
+  bool _ldacBusy = false;
+  bool _ldacKnown = false;
+  String _ldacStatus = 'Estado do fone ainda não confirmado';
+  bool get ldacBusy => _ldacBusy;
+  bool get ldacKnown => _ldacKnown;
+  String get ldacStatus => _ldacStatus;
+  String get ldacDiagnostics => _ldacLog.join('\n');
+
+  void _logLdac(String message) {
+    _ldacLog.add('${DateTime.now().toIso8601String()} $message');
+    if (_ldacLog.length > 150) _ldacLog.removeAt(0);
+  }
+
   SavedDevice? get lastDevice => _prefs?.lastDevice;
   bool get autoReconnect => _prefs?.autoReconnect ?? true;
 
@@ -67,7 +83,9 @@ class BleController extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> startScan({Duration timeout = const Duration(seconds: 12)}) async {
+  Future<void> startScan({
+    Duration timeout = const Duration(seconds: 12),
+  }) async {
     await _ensureAdapterOn();
     _devices.clear();
     _scanning = true;
@@ -168,10 +186,15 @@ class BleController extends ChangeNotifier {
   }
 
   Future<void> connect(DiscoveredDevice device) async {
+    if (_ldacBusy) throw StateError('Aguarde a operação LDAC terminar.');
     await stopScan();
     await _tearDownLink();
 
     _pendingReconnect = false;
+    _ldacKnown = false;
+    _ldacStatus = 'Estado do fone ainda não confirmado';
+    _ldacLog.clear();
+    _logLdac('OpenQCY LDAC Teste 1.0.1; vendorId=${device.vendorId}');
     _session = DeviceSession(
       device: device,
       phase: ConnectionPhase.connecting,
@@ -223,6 +246,9 @@ class BleController extends ChangeNotifier {
 
     final battery = await readBattery();
     final firmware = await readFirmware();
+    _logLdac(
+      'Firmware: L ${firmware?.left ?? "?"}; R ${firmware?.right ?? "?"}',
+    );
     _session = _session?.copyWith(battery: battery, firmware: firmware);
 
     await syncSettingsFromDevice();
@@ -233,6 +259,7 @@ class BleController extends ChangeNotifier {
 
   void _onConnectionStateChanged(BluetoothConnectionState state) {
     if (state == BluetoothConnectionState.disconnected) {
+      _logLdac('BLE desconectado; reconexão pendente=$_pendingReconnect');
       if (_pendingReconnect) {
         unawaited(_reconnectAfterRestart());
       } else {
@@ -418,13 +445,28 @@ class BleController extends ChangeNotifier {
         anc = _ancFromSimpleMode(cmd.params[0]);
         ancLevel = anc?.defaultLevel;
       } else if (cmd.opcode == 0x09 && cmd.params.isNotEmpty) {
-        settings =
-            settings.copyWith(gameMode: toggleValueFromByte(cmd.params[0]));
+        settings = settings.copyWith(
+          gameMode: toggleValueFromByte(cmd.params[0]),
+        );
       } else if (cmd.opcode == 0x23 && cmd.params.isNotEmpty) {
-        settings = settings.copyWith(ldac: toggleValueFromByte(cmd.params[0]));
+        final value = cmd.params[0];
+        _logLdac(
+          'RX LDAC: ${cmd.params.map((b) => b.toRadixString(16).padLeft(2, "0")).join(" ")}',
+        );
+        if (value == 0x01 || value == 0x02) {
+          settings = settings.copyWith(ldac: value == 0x01);
+          _ldacKnown = true;
+          if (!_ldacBusy) {
+            _ldacStatus = value == 0x01
+                ? 'LDAC habilitado no fone. Confira o codec ativo no Android.'
+                : 'LDAC desativado no fone.';
+          }
+        }
+        _ldacResponses.add(value);
       } else if (cmd.opcode == 0x10 && cmd.params.isNotEmpty) {
-        settings =
-            settings.copyWith(sleepMode: toggleValueFromByte(cmd.params[0]));
+        settings = settings.copyWith(
+          sleepMode: toggleValueFromByte(cmd.params[0]),
+        );
       } else if (cmd.opcode == 0x2d && cmd.params.isNotEmpty) {
         settings = settings.copyWith(
           spatialAudio: toggleValueFromByte(cmd.params[0]),
@@ -504,7 +546,18 @@ class BleController extends ChangeNotifier {
     await syncKeyFunctionsFromDevice();
 
     const opcodes = [
-      0x2f, 0x09, 0x10, 0x06, 0x23, 0x24, 0x2d, 0x08, 0x16, 0x17, 0x0c, 0x14,
+      0x2f,
+      0x09,
+      0x10,
+      0x06,
+      0x23,
+      0x24,
+      0x2d,
+      0x08,
+      0x16,
+      0x17,
+      0x0c,
+      0x14,
       0x2b,
     ];
     for (final op in opcodes) {
@@ -548,14 +601,16 @@ class BleController extends ChangeNotifier {
 
   Future<Map<int, int>> readKeyFunctions() async {
     final char = _keyFuncChar;
-    if (char == null) throw StateError('Key function characteristic unavailable');
+    if (char == null)
+      throw StateError('Key function characteristic unavailable');
     final data = await char.read();
     return parseKeyFunctionData(data);
   }
 
   Future<void> writeKeyFunctions(Map<int, int> mappings) async {
     final char = _keyFuncChar;
-    if (char == null) throw StateError('Key function characteristic unavailable');
+    if (char == null)
+      throw StateError('Key function characteristic unavailable');
     await char.write(serializeKeyFunctions(mappings), withoutResponse: true);
     _session = _session?.copyWith(
       settings: _session!.settings.copyWith(keyFunctions: Map.of(mappings)),
@@ -579,7 +634,18 @@ class BleController extends ChangeNotifier {
   Future<void> _send(List<int> packet) async {
     final cmd = _commandChar;
     if (cmd == null) throw StateError('Not connected');
-    await cmd.write(packet, withoutResponse: true);
+    if (packet.length >= 3 &&
+        (packet[2] == 0x23 ||
+            (packet[2] == 0xfe && packet.length >= 5 && packet[4] == 0x23))) {
+      _logLdac(
+        'TX ${packet.map((b) => b.toRadixString(16).padLeft(2, "0")).join(" ")}',
+      );
+    }
+    // Respect the characteristic's advertised write properties.
+    await cmd.write(
+      packet,
+      withoutResponse: cmd.properties.writeWithoutResponse,
+    );
   }
 
   Future<void> _sendAndRefresh(int opcode, List<int> packet) async {
@@ -626,7 +692,60 @@ class BleController extends ChangeNotifier {
   }
 
   Future<void> setLdac(bool enabled) async {
-    await _sendAndRefresh(0x23, buildLdacCommand(enabled));
+    if (_ldacBusy)
+      throw StateError('Já existe uma operação LDAC em andamento.');
+    final originalSession = _session;
+    if (originalSession == null ||
+        originalSession.phase != ConnectionPhase.connected) {
+      throw StateError('Conecte o fone antes de alterar LDAC.');
+    }
+    if (enabled && originalSession.settings.dualDevice) {
+      throw StateError(
+        'Desative a conexão com dois dispositivos antes de ativar LDAC.',
+      );
+    }
+    _ldacBusy = true;
+    _ldacKnown = false;
+    _ldacStatus = enabled ? 'Solicitando LDAC…' : 'Desativando LDAC…';
+    _logLdac('Solicitação: LDAC ${enabled ? "ativado" : "desativado"}');
+    // Arm before the write: some firmware disconnects before it returns.
+    _pendingReconnect = true;
+    notifyListeners();
+    try {
+      await changeLdacAndConfirm(
+        enabled: enabled,
+        responses: _ldacResponses.stream,
+        writeSetting: () async {
+          try {
+            await _send(buildLdacCommand(enabled));
+          } catch (error) {
+            if (_session?.phase != ConnectionPhase.reconnecting) rethrow;
+            _logLdac('Escrita interrompida pelo reinício: $error');
+          }
+        },
+        requestSetting: () async {
+          if (_session?.phase != ConnectionPhase.connected) return;
+          await _send(buildRequestDataCommand(0x23));
+        },
+        log: _logLdac,
+      );
+      _ldacStatus = enabled
+          ? 'LDAC habilitado no fone. Confira o codec ativo no Android.'
+          : 'LDAC desativado no fone.';
+      _logLdac(
+        'Preferência do fone confirmada. Codec A2DP não medido pelo app.',
+      );
+      // Some firmware acknowledges first, then restarts a moment later.
+      await Future<void>.delayed(const Duration(seconds: 2));
+    } catch (error) {
+      _ldacStatus = 'Alteração não confirmada. Consulte o diagnóstico LDAC.';
+      _logLdac('Falha: $error');
+      rethrow;
+    } finally {
+      _ldacBusy = false;
+      if (!_reconnectLoopRunning) _pendingReconnect = false;
+      notifyListeners();
+    }
   }
 
   Future<void> setSleepMode(bool enabled) async {
@@ -695,9 +814,7 @@ class BleController extends ChangeNotifier {
   Future<EqParams?> _fetchEqParams({int expectedBands = 10}) async {
     for (var attempt = 0; attempt < 6; attempt++) {
       if (attempt > 0) {
-        await Future<void>.delayed(
-          Duration(milliseconds: 120 + attempt * 100),
-        );
+        await Future<void>.delayed(Duration(milliseconds: 120 + attempt * 100));
       }
 
       final fromChar = await _readEqCharacteristic();
@@ -803,10 +920,7 @@ class BleController extends ChangeNotifier {
   Future<void> refreshStatus() async {
     final battery = await readBattery();
     final firmware = await readFirmware();
-    _session = _session?.copyWith(
-      battery: battery,
-      firmware: firmware,
-    );
+    _session = _session?.copyWith(battery: battery, firmware: firmware);
     notifyListeners();
     await syncSettingsFromDevice();
   }

@@ -1,4 +1,4 @@
-name: Build & Publish APK
+name: Build and release LDAC APK
 
 on:
   push:
@@ -6,20 +6,24 @@ on:
   workflow_dispatch:
 
 concurrency:
-  group: build-apk-${{ github.ref }}
+  group: ldac-apk-${{ github.ref }}
   cancel-in-progress: true
 
 permissions:
-  contents: write
+  contents: read
 
 env:
   FLUTTER_VERSION: "3.44.5"
-  HAS_RELEASE_SIGNING: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
 
 jobs:
   build:
-    name: Build release APK
+    name: Test, build ARM64 APK and publish release
     runs-on: ubuntu-latest
+    timeout-minutes: 40
+    permissions:
+      contents: write
+    env:
+      HAS_RELEASE_SIGNING: ${{ secrets.ANDROID_KEYSTORE_BASE64 != '' }}
 
     steps:
       - name: Checkout
@@ -38,8 +42,15 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Restore test signing key
+        if: env.HAS_RELEASE_SIGNING != 'true'
+        uses: actions/cache@v4
+        with:
+          path: ~/.android/debug.keystore
+          key: openqcy-ldac-debug-signing-v1
+
       - name: Install dependencies
-        run: flutter pub get
+        run: flutter pub get --enforce-lockfile
 
       - name: Analyze
         run: flutter analyze
@@ -47,59 +58,87 @@ jobs:
       - name: Test
         run: flutter test
 
-      - name: Configure release signing
-        if: ${{ env.HAS_RELEASE_SIGNING == 'true' }}
+      - name: Configure optional release signing
+        if: env.HAS_RELEASE_SIGNING == 'true'
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
           ANDROID_STORE_PASSWORD: ${{ secrets.ANDROID_STORE_PASSWORD }}
+        shell: bash
         run: |
-          echo "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release.keystore
-          cat > android/key.properties <<EOF
-          storeFile=release.keystore
-          keyAlias=$ANDROID_KEY_ALIAS
-          keyPassword=$ANDROID_KEY_PASSWORD
-          storePassword=$ANDROID_STORE_PASSWORD
-          EOF
-          echo "Release keystore configured."
+          set -euo pipefail
+          printf '%s' "$ANDROID_KEYSTORE_BASE64" | base64 --decode > android/app/release.keystore
+          python3 - <<'PYTHON'
+          import os
+          from pathlib import Path
+          fields = {
+              "storeFile": "release.keystore",
+              "keyAlias": os.environ["ANDROID_KEY_ALIAS"],
+              "keyPassword": os.environ["ANDROID_KEY_PASSWORD"],
+              "storePassword": os.environ["ANDROID_STORE_PASSWORD"],
+          }
+          def escape(value):
+              return value.replace("\\", "\\\\").replace("\n", "\\n").replace("\r", "\\r").replace("=", "\\=").replace(":", "\\:").replace(" ", "\\ ")
+          Path("android/key.properties").write_text("".join(f"{k}={escape(v)}\n" for k, v in fields.items()))
+          PYTHON
 
       - name: Read app version
         id: version
+        shell: bash
         run: |
-          VERSION=$(grep '^version:' pubspec.yaml | sed 's/version:[[:space:]]*//' | tr -d '[:space:]')
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "App version: $VERSION"
+          python3 - <<'PYTHON'
+          import os, re
+          from pathlib import Path
+          match = re.search(r"^version: ([0-9]+\.[0-9]+\.[0-9]+)\+([0-9]+)$", Path("pubspec.yaml").read_text(), re.M)
+          if not match:
+              raise SystemExit("Expected version: major.minor.patch+build in pubspec.yaml")
+          with open(os.environ["GITHUB_OUTPUT"], "a") as output:
+              output.write(f"version={match[1]}\ncode={match[2]}\n")
+          PYTHON
 
-      - name: Build APK
-        run: flutter build apk --release
+      - name: Build ARM64 APK
+        run: flutter build apk --release --target-platform android-arm64
 
-      - name: Rename APK
+      - name: Package APK and checksum
+        env:
+          APP_VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
         run: |
+          set -euo pipefail
           mkdir -p dist
-          cp build/app/outputs/flutter-apk/app-release.apk \
-             "dist/OpenQCY-v${{ steps.version.outputs.version }}.apk"
-          cp build/app/outputs/flutter-apk/app-release.apk \
-             dist/OpenQCY-latest.apk
+          cp build/app/outputs/flutter-apk/app-release.apk "dist/OpenQCY-LDAC-Teste-v${APP_VERSION}-arm64.apk"
+          (cd dist && sha256sum ./*.apk > SHA256SUMS.txt)
+          cp TESTE_LDAC.md dist/TESTE_LDAC.md
 
-      - name: Upload build artifact
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
-          name: openqcy-apk
-          path: dist/*.apk
+          name: OpenQCY-LDAC-Teste-arm64
+          path: dist/
           if-no-files-found: error
 
-      - name: Publish rolling release
+      - name: Publish experimental release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: latest
-          name: "OpenQCY latest (build ${{ github.run_number }})"
-          body: |
-            Automated build from `main` @ ${{ github.sha }}.
-
-            App version: **${{ steps.version.outputs.version }}**
-
-            Download `OpenQCY-latest.apk` below and sideload it on Android.
+          tag_name: ldac-v${{ steps.version.outputs.version }}-build.${{ github.run_number }}.${{ github.run_attempt }}
+          name: OpenQCY LDAC Teste v${{ steps.version.outputs.version }} (build ${{ github.run_number }})
+          target_commitish: ${{ github.sha }}
           prerelease: true
-          files: dist/*.apk
+          make_latest: false
           fail_on_unmatched_files: true
+          body: |
+            APK ARM64 experimental para testar o comando direto LDAC no HT05.
+
+            Commit: `${{ github.sha }}`
+            Versão: `${{ steps.version.outputs.version }}+${{ steps.version.outputs.code }}`
+            Compilação: [GitHub Actions](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
+
+            O app consulta a confirmação do fone. A transmissão LDAC real deve ser conferida no Android durante a reprodução.
+            Este build não altera o firmware do fone. Pode coexistir com o OpenQCY original.
+            Sem os secrets de release, utiliza uma chave de desenvolvimento mantida no cache do CI.
+            Confira SHA256SUMS.txt e as instruções em TESTE_LDAC.md.
+          files: |
+            dist/*.apk
+            dist/SHA256SUMS.txt
+            dist/TESTE_LDAC.md

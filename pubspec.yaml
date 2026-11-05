@@ -1,7 +1,7 @@
 name: melo_control
 description: OpenQCY — control QCY MeloBuds and compatible earbuds over BLE.
 publish_to: 'none'
-version: 1.0.0+1
+version: 1.0.1+2
 
 environment:
   sdk: ^3.12.2

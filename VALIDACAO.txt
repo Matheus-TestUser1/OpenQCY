@@ -1,0 +1,10 @@
+PASS ack before GATT write returns
+PASS readback without reboot; only one enable write
+PASS temporary link loss then confirmed readback
+PASS write success without reply is not activation
+PASS disabled reply cannot confirm enable
+
+Analyzing ldac_change.dart...
+No issues found!
+
+Limites: leia TESTE_LDAC.md. APK não gerado; sem teste físico.

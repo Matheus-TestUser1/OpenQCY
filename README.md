@@ -1,3 +1,17 @@
+# OpenQCY LDAC Teste
+
+Fork experimental para testar o pedido direto de ativação LDAC e confirmar a
+resposta do fone. A transmissão LDAC real no HT05 ainda depende de teste físico.
+
+- [Baixar APKs nas Releases](https://github.com/Matheus-TestUser1/OpenQCY/releases)
+- [Compilações e testes](https://github.com/Matheus-TestUser1/OpenQCY/actions)
+- [Instruções, limites e assinatura](TESTE_LDAC.md)
+
+O aplicativo pode coexistir com o OpenQCY original. O CI gera APK ARM64 em cada
+push em `main` e publica uma release experimental após análise, testes e build.
+
+---
+
 # OpenQCY
 
 Unofficial Flutter app to control **QCY MeloBuds Pro** (and other QCY earbuds with matching vendor IDs) over BLE GATT on Android.
