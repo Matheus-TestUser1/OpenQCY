@@ -1,4 +1,21 @@
-# OpenQCY LDAC Teste — 1.0.2
+# OpenQCY LDAC Teste — 1.0.3
+
+## Teste do canal SoundPEATS / SPP (novo)
+
+Não é necessário instalar o aplicativo SoundPEATS. Atualize este APK, feche
+outros controladores de fone e mantenha o HT05 emparelhado para áudio no Android.
+
+1. Conecte o HT05 no OpenQCY e abra **Testar canal SoundPEATS (SPP)**.
+2. Escolha na lista o HT05 que você usa para ouvir áudio. O endereço pode ser
+   diferente do endereço do controle BLE.
+3. Aguarde o diagnóstico, normalmente até 30 segundos.
+4. Toque em **Copiar** e envie o texto inteiro. É possível reabrir o último
+   resultado em **Ver diagnóstico SoundPEATS / SPP**.
+
+Este botão executa somente consultas. Ele testa conexão e identificação antes
+de consultar o estado LDAC, sem enviar o comando SoundPEATS de ativação.
+Não é um desbloqueio confirmado. Falha no SPP não prova ausência de LDAC.
+Detalhes do protocolo e dos limites: [docs/SOUNDPEATS_PROBE.md](docs/SOUNDPEATS_PROBE.md).
 
 Base: HttpKiwi/OpenQCY, commit 4eab9deec3a139f9a68ba0277b3e7f38a6ef665e.
 Licença MIT preservada em LICENSE. Uso de protocolo documentado publicamente;

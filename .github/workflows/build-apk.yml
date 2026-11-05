@@ -100,6 +100,10 @@ jobs:
       - name: Build ARM64 APK
         run: flutter build apk --release --target-platform android-arm64
 
+      - name: Test native read-only protocol
+        working-directory: android
+        run: ./gradlew :app:testReleaseUnitTest
+
       - name: Package APK and checksum
         env:
           APP_VERSION: ${{ steps.version.outputs.version }}
@@ -128,13 +132,14 @@ jobs:
           make_latest: false
           fail_on_unmatched_files: true
           body: |
-            APK ARM64 experimental para testar o comando direto LDAC no HT05.
+            APK ARM64 experimental com controle QCY e diagnóstico SoundPEATS/SPP somente de leitura.
 
             Commit: `${{ github.sha }}`
             Versão: `${{ steps.version.outputs.version }}+${{ steps.version.outputs.code }}`
             Compilação: [GitHub Actions](${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }})
 
-            O app consulta a confirmação do fone. A transmissão LDAC real deve ser conferida no Android durante a reprodução.
+            O botão Testar canal SoundPEATS (SPP) consulta serviços, versão, bateria e estado LDAC sem enviar ativação.
+            O controle BLE QCY continua disponível. A transmissão LDAC real deve ser conferida no Android durante a reprodução.
             Este build não altera o firmware do fone. Pode coexistir com o OpenQCY original.
             Sem os secrets de release, utiliza uma chave de desenvolvimento mantida no cache do CI.
             Confira SHA256SUMS.txt e as instruções em TESTE_LDAC.md.

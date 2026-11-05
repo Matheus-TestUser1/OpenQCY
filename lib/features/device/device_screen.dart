@@ -23,6 +23,92 @@ class DeviceScreen extends ConsumerStatefulWidget {
 
 class _DeviceScreenState extends ConsumerState<DeviceScreen> {
   bool _ancBusy = false;
+  bool _sppBusy = false;
+  String _sppReport = '';
+
+  Future<void> _showSppReport() async {
+    final report = _sppReport;
+    await showDialog<void>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Diagnóstico SoundPEATS / SPP'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: SingleChildScrollView(child: SelectableText(report)),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () async {
+              await Clipboard.setData(ClipboardData(text: report));
+            },
+            child: const Text('Copiar'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Fechar'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _probeSoundPeats() async {
+    if (_sppBusy) return;
+    setState(() => _sppBusy = true);
+    const platform = MethodChannel('openqcy/system');
+    try {
+      final devices = await platform.invokeListMethod<Object?>('listProbeDevices') ?? [];
+      final choices = <({String address, String name})>[];
+      for (final item in devices) {
+        if (item is Map) {
+          final address = item['address'];
+          final name = item['name'];
+          if (address is String && name is String) {
+            choices.add((address: address, name: name));
+          }
+        }
+      }
+      if (choices.isEmpty) {
+        throw StateError('Emparelhe o HT05 para áudio nos ajustes Bluetooth do Android.');
+      }
+      if (!mounted) return;
+      final selected = await showDialog<String>(
+        context: context,
+        builder: (context) => SimpleDialog(
+          title: const Text('Escolha o HT05 usado para áudio'),
+          children: [
+            const Padding(
+              padding: EdgeInsets.fromLTRB(24, 0, 24, 12),
+              child: Text('Teste somente de leitura. Escolha o fone correto na lista de dispositivos emparelhados.'),
+            ),
+            for (final choice in choices)
+              SimpleDialogOption(
+                onPressed: () => Navigator.pop(context, choice.address),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [Text(choice.name), Text(choice.address)],
+                ),
+              ),
+          ],
+        ),
+      );
+      if (selected == null || !mounted) return;
+      final ble = ref.read(bleControllerProvider);
+      final vendor = ble.session?.device.vendorId;
+      final gatt = ble.gattSummary;
+      final report = await platform.invokeMethod<String>(
+        'probeSoundPeats', {'address': selected},
+      ).timeout(const Duration(seconds: 35));
+      _sppReport = 'OpenQCY LDAC Teste 1.0.3; vendorId=$vendor\n'
+          '$gatt\n\n${report ?? "Android não retornou diagnóstico."}';
+      if (mounted) await _showSppReport();
+    } catch (error) {
+      _sppReport = 'Falha no diagnóstico SPP: $error';
+      if (mounted) await _showSppReport();
+    } finally {
+      if (mounted) setState(() => _sppBusy = false);
+    }
+  }
 
   Future<void> _showLdacDiagnostics() async {
     final ble = ref.read(bleControllerProvider);
@@ -192,12 +278,12 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
     }
 
     final connected = session.phase == ConnectionPhase.connected;
-    final interactive = connected && !session.isBusy && !ble.ldacBusy;
+    final interactive = connected && !session.isBusy && !ble.ldacBusy && !_sppBusy;
     final features = featuresForVendor(session.device.vendorId);
     final s = session.settings;
 
     return PopScope(
-      canPop: !ble.ldacBusy,
+      canPop: !ble.ldacBusy && !_sppBusy,
       onPopInvokedWithResult: (didPop, _) {
         if (didPop) {
           ref.read(bleControllerProvider).softDisconnect();
@@ -208,7 +294,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
           title: Text(session.device.displayName),
           leading: IconButton(
             icon: const Icon(Icons.arrow_back),
-            onPressed: ble.ldacBusy ? null : _goBack,
+            onPressed: ble.ldacBusy || _sppBusy ? null : _goBack,
           ),
           actions: [
             IconButton(
@@ -216,11 +302,11 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
               icon: const Icon(Icons.refresh),
             ),
             IconButton(
-              onPressed: () => context.push('/settings'),
+              onPressed: _sppBusy ? null : () => context.push('/settings'),
               icon: const Icon(Icons.settings_outlined),
             ),
             IconButton(
-              onPressed: connected && !ble.ldacBusy ? _disconnect : null,
+              onPressed: connected && !ble.ldacBusy && !_sppBusy ? _disconnect : null,
               icon: const Icon(Icons.link_off),
               tooltip: 'Disconnect',
             ),
@@ -446,6 +532,23 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     ),
                     trailing: const Icon(Icons.article_outlined),
                     onTap: _showLdacDiagnostics,
+                  ),
+                if (features.ldacExperimental)
+                  ListTile(
+                    title: const Text('Testar canal SoundPEATS (SPP)'),
+                    subtitle: Text(_sppBusy
+                        ? 'Consultando serviços e respostas. Aguarde…'
+                        : 'Somente leitura: versão, bateria e estado LDAC'),
+                    trailing: _sppBusy
+                        ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(strokeWidth: 2))
+                        : const Icon(Icons.bluetooth_searching),
+                    onTap: interactive ? _probeSoundPeats : null,
+                  ),
+                if (_sppReport.isNotEmpty)
+                  ListTile(
+                    title: const Text('Ver diagnóstico SoundPEATS / SPP'),
+                    trailing: const Icon(Icons.article_outlined),
+                    onTap: _showSppReport,
                   ),
                 if (features.sleepMode)
                   SwitchListTile(

@@ -60,6 +60,8 @@ class BleController extends ChangeNotifier {
   bool get ldacKnown => _ldacKnown;
   String get ldacStatus => _ldacStatus;
   String get ldacDiagnostics => _ldacLog.join('\n');
+  String _gattSummary = '';
+  String get gattSummary => _gattSummary;
 
   void _logLdac(String message) {
     _ldacLog.add('${DateTime.now().toIso8601String()} $message');
@@ -198,7 +200,8 @@ class BleController extends ChangeNotifier {
     _ldacLog.clear();
     _rawNotificationCount = 0;
     _parsedCommandCount = 0;
-    _logLdac('OpenQCY LDAC Teste 1.0.2; vendorId=${device.vendorId}');
+    _gattSummary = '';
+    _logLdac('OpenQCY LDAC Teste 1.0.3; vendorId=${device.vendorId}');
     _session = DeviceSession(
       device: device,
       phase: ConnectionPhase.connecting,
@@ -399,6 +402,14 @@ class BleController extends ChangeNotifier {
       throw StateError(
         'QCY GATT service not found. Found: ${found.isEmpty ? "(none)" : found}',
       );
+    }
+
+    _gattSummary = lastServices.map((service) {
+      final chars = service.characteristics.map((c) => c.uuid.str128).join(', ');
+      return 'GATT serviço ${service.uuid.str128}; características: $chars';
+    }).join('\n');
+    for (final line in _gattSummary.split('\n')) {
+      _logLdac(line);
     }
 
     BluetoothCharacteristic? find(Guid expected) {
