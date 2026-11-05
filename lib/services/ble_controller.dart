@@ -601,16 +601,18 @@ class BleController extends ChangeNotifier {
 
   Future<Map<int, int>> readKeyFunctions() async {
     final char = _keyFuncChar;
-    if (char == null)
+    if (char == null) {
       throw StateError('Key function characteristic unavailable');
+    }
     final data = await char.read();
     return parseKeyFunctionData(data);
   }
 
   Future<void> writeKeyFunctions(Map<int, int> mappings) async {
     final char = _keyFuncChar;
-    if (char == null)
+    if (char == null) {
       throw StateError('Key function characteristic unavailable');
+    }
     await char.write(serializeKeyFunctions(mappings), withoutResponse: true);
     _session = _session?.copyWith(
       settings: _session!.settings.copyWith(keyFunctions: Map.of(mappings)),
@@ -692,8 +694,9 @@ class BleController extends ChangeNotifier {
   }
 
   Future<void> setLdac(bool enabled) async {
-    if (_ldacBusy)
+    if (_ldacBusy) {
       throw StateError('Já existe uma operação LDAC em andamento.');
+    }
     final originalSession = _session;
     if (originalSession == null ||
         originalSession.phase != ConnectionPhase.connected) {

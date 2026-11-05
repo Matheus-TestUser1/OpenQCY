@@ -1,5 +1,7 @@
 import 'dart:async';
-import '../lib/core/qcy/ldac_change.dart';
+import 'dart:io';
+
+import 'package:melo_control/core/qcy/ldac_change.dart';
 
 Future<void> main() async {
   var passed = 0;
@@ -9,7 +11,7 @@ Future<void> main() async {
       await body(replies);
       if (replies.hasListener) throw StateError('Leaked reply listener');
       passed++;
-      print('PASS $name');
+      stdout.writeln('PASS $name');
     } finally {
       await replies.close();
     }
@@ -69,5 +71,5 @@ Future<void> main() async {
   await scenario('GATT write error propagates', (r) async {
     await mustFail(change(r, write: () async => throw StateError('write failed'), query: () async => r.add(1)));
   });
-  print('$passed/8 simulated protocol scenarios passed; no physical Bluetooth test.');
+  stdout.writeln('$passed/8 simulated protocol scenarios passed; no physical Bluetooth test.');
 }
