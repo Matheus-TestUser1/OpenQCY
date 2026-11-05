@@ -101,8 +101,20 @@ jobs:
         run: flutter build apk --release --target-platform android-arm64
 
       - name: Test native read-only protocol
-        working-directory: android
-        run: ./gradlew :app:testReleaseUnitTest
+        run: |
+          ./android/gradlew -p protocol-tests test --no-daemon
+          python3 - <<'PYTHON'
+          from pathlib import Path
+          import xml.etree.ElementTree as ET
+          reports = list(Path("protocol-tests/build/test-results/test").glob("TEST-*.xml"))
+          suites = [ET.parse(path).getroot() for path in reports]
+          count = sum(int(suite.attrib["tests"]) for suite in suites)
+          failures = sum(int(suite.attrib["failures"]) + int(suite.attrib["errors"]) for suite in suites)
+          skipped = sum(int(suite.attrib["skipped"]) for suite in suites)
+          if count < 12 or failures or skipped:
+              raise SystemExit(f"Protocol checks incomplete: {count} tests, {failures} failures, {skipped} skipped")
+          print(f"Protocol checks passed: {count} tests")
+          PYTHON
 
       - name: Package APK and checksum
         env:

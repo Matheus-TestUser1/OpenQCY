@@ -38,3 +38,9 @@ Tests cover the exact GET bytes, rejected SETs, fragmented/coalesced replies,
 stream resynchronisation, unrelated vendors/opcodes, invalid states, battery
 ranges and firmware string validation. Physical HT05 compatibility remains
 unverified until the user runs the probe.
+
+The pure Kotlin codec is compiled directly from the Android source by the
+standalone `protocol-tests` JVM project. Run `./android/gradlew -p protocol-tests
+test` after Flutter has prepared the wrapper. CI requires all 12 checks to run
+and pass before publishing an APK. It does not depend on Android unit-test
+variants being enabled by Flutter.
