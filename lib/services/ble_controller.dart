@@ -415,7 +415,7 @@ class BleController extends ChangeNotifier {
     _eqChar = find(QcyGuids.eq);
     _keyFuncChar = find(QcyGuids.keyFunction);
 
-    for (final char in qcyService!.characteristics) {
+    for (final char in qcyService.characteristics) {
       final p = char.properties;
       _logLdac('GATT ${char.uuid.str128}: read=${p.read} write=${p.write} '
           'writeWithoutResponse=${p.writeWithoutResponse} '
