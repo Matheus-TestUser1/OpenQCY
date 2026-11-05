@@ -98,4 +98,24 @@ void main() {
     );
     expect(responses.hasListener, isFalse);
   });
+
+  test('unanswered requests stop at the configured query budget', () async {
+    var queries = 0;
+    await expectLater(
+      changeLdacAndConfirm(
+        enabled: true,
+        responses: responses.stream,
+        writeSetting: () async {},
+        requestSetting: () async {
+          queries++;
+        },
+        maxRequests: 2,
+        timeout: const Duration(milliseconds: 150),
+        pollInterval: const Duration(milliseconds: 5),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(queries, 2);
+    expect(responses.hasListener, isFalse);
+  });
 }

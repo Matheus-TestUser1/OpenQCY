@@ -1,4 +1,4 @@
-# OpenQCY LDAC Teste — 1.0.1
+# OpenQCY LDAC Teste — 1.0.2
 
 Base: HttpKiwi/OpenQCY, commit 4eab9deec3a139f9a68ba0277b3e7f38a6ef665e.
 Licença MIT preservada em LICENSE. Uso de protocolo documentado publicamente;
@@ -25,6 +25,24 @@ nenhum código do aplicativo proprietário QCY foi incorporado.
 5. Caso o fone confirme, confira o codec nas opções de desenvolvedor do Android
    com música tocando. Pode ser necessário reconectar o áudio Bluetooth.
 6. Se falhar, abra “Diagnóstico LDAC”, copie o texto e envie para análise.
+
+## Diagnóstico ampliado da versão 1.0.2
+
+- Identifica os HT05 `19777` e `19778` como experimento, pois o catálogo
+  do modelo não anuncia LDAC. A opção continua disponível para tentativa direta.
+- Registra as propriedades das características GATT e a habilitação de notificações.
+- Captura todas as notificações em hexadecimal antes do parser, inclusive
+  quadros que o parser não reconhece. O parser continua estrito para não
+  interpretar bytes inválidos como ativação.
+- Limita a consulta LDAC a oito tentativas, espaçadas em três segundos.
+- Consulta uma vez o estado do modo jogo como referência do canal de controle,
+  sem alterar esse modo.
+- Mostra quantas notificações brutas e comandos decodificados chegaram durante
+  a tentativa. Nenhuma resposta é diferente de uma resposta negativa explícita.
+
+Para produzir o novo diagnóstico, reconecte o fone, tente ativar LDAC uma vez,
+aguarde o resultado e copie o diagnóstico inteiro. Confira também se o ANC
+responde pelo aplicativo. Não é necessário repetir a tentativa várias vezes.
 
 ## Limites
 

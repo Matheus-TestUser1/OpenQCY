@@ -9,12 +9,14 @@ Future<void> changeLdacAndConfirm({
   required Future<void> Function() requestSetting,
   void Function(String)? log,
   Duration timeout = const Duration(seconds: 35),
-  Duration pollInterval = const Duration(milliseconds: 800),
+  Duration pollInterval = const Duration(seconds: 3),
+  int maxRequests = 8,
 }) async {
   final confirmed = Completer<void>();
   int? lastState;
   var closed = false;
   var queryInFlight = false;
+  var requests = 0;
   final subscription = responses.listen((value) {
     if (value != 0x01 && value != 0x02) {
       log?.call('Resposta LDAC desconhecida: 0x${value.toRadixString(16)}');
@@ -29,6 +31,11 @@ Future<void> changeLdacAndConfirm({
 
   Future<void> query() async {
     if (closed || confirmed.isCompleted || queryInFlight) return;
+    if (requests >= maxRequests) {
+      timer?.cancel();
+      return;
+    }
+    requests++;
     queryInFlight = true;
     try {
       await requestSetting();

@@ -53,6 +53,8 @@ class BleController extends ChangeNotifier {
   final List<String> _ldacLog = [];
   bool _ldacBusy = false;
   bool _ldacKnown = false;
+  int _rawNotificationCount = 0;
+  int _parsedCommandCount = 0;
   String _ldacStatus = 'Estado do fone ainda não confirmado';
   bool get ldacBusy => _ldacBusy;
   bool get ldacKnown => _ldacKnown;
@@ -61,7 +63,7 @@ class BleController extends ChangeNotifier {
 
   void _logLdac(String message) {
     _ldacLog.add('${DateTime.now().toIso8601String()} $message');
-    if (_ldacLog.length > 150) _ldacLog.removeAt(0);
+    if (_ldacLog.length > 300) _ldacLog.removeAt(0);
   }
 
   SavedDevice? get lastDevice => _prefs?.lastDevice;
@@ -194,7 +196,9 @@ class BleController extends ChangeNotifier {
     _ldacKnown = false;
     _ldacStatus = 'Estado do fone ainda não confirmado';
     _ldacLog.clear();
-    _logLdac('OpenQCY LDAC Teste 1.0.1; vendorId=${device.vendorId}');
+    _rawNotificationCount = 0;
+    _parsedCommandCount = 0;
+    _logLdac('OpenQCY LDAC Teste 1.0.2; vendorId=${device.vendorId}');
     _session = DeviceSession(
       device: device,
       phase: ConnectionPhase.connecting,
@@ -411,6 +415,13 @@ class BleController extends ChangeNotifier {
     _eqChar = find(QcyGuids.eq);
     _keyFuncChar = find(QcyGuids.keyFunction);
 
+    for (final char in qcyService!.characteristics) {
+      final p = char.properties;
+      _logLdac('GATT ${char.uuid.str128}: read=${p.read} write=${p.write} '
+          'writeWithoutResponse=${p.writeWithoutResponse} '
+          'notify=${p.notify} indicate=${p.indicate}');
+    }
+
     if (_commandChar == null || _notifyChar == null) {
       throw StateError('Required GATT characteristics missing on QCY service');
     }
@@ -426,18 +437,39 @@ class BleController extends ChangeNotifier {
   Future<void> _subscribeNotifications() async {
     await _notifySub?.cancel();
     final notify = _notifyChar!;
-    await notify.setNotifyValue(true);
-    _notifySub = notify.lastValueStream.listen(_onNotify);
+    // Listen first so an immediate notification after CCCD setup is captured.
+    _notifySub = notify.lastValueStream.listen(
+      _onNotify,
+      onError: (Object error) => _logLdac('Erro no stream de notificações: $error'),
+    );
+    try {
+      await notify.setNotifyValue(true);
+      _logLdac('Notificações habilitadas: ${notify.uuid.str128}');
+    } catch (error) {
+      await _notifySub?.cancel();
+      _notifySub = null;
+      _logLdac('Falha ao habilitar notificações: $error');
+      rethrow;
+    }
   }
 
   void _onNotify(List<int> data) {
     if (_session == null) return;
+    if (data.isEmpty) return;
+    _rawNotificationCount++;
+    _logLdac('RX RAW (${data.length} bytes): '
+        '${data.map((b) => b.toRadixString(16).padLeft(2, "0")).join(" ")}');
+    final commands = parsePacket(data);
+    if (commands.isEmpty) {
+      _logLdac('Parser não reconheceu este quadro; bytes brutos preservados.');
+    }
+    _parsedCommandCount += commands.length;
     var settings = _session!.settings;
     AncMode? anc = _session!.ancMode;
     int? ancLevel = _session!.ancLevel;
     BatteryLevels? battery = _session!.battery;
 
-    for (final cmd in parsePacket(data)) {
+    for (final cmd in commands) {
       if (cmd.opcode == 0x17 && cmd.params.length >= 3) {
         anc = AncMode.fromAck(cmd.params[0], cmd.params[1], cmd.params[2]);
         ancLevel = anc == null ? null : cmd.params[2].clamp(0, anc.levels - 1);
@@ -636,11 +668,12 @@ class BleController extends ChangeNotifier {
   Future<void> _send(List<int> packet) async {
     final cmd = _commandChar;
     if (cmd == null) throw StateError('Not connected');
-    if (packet.length >= 3 &&
+    if (_ldacBusy || (packet.length >= 3 &&
         (packet[2] == 0x23 ||
-            (packet[2] == 0xfe && packet.length >= 5 && packet[4] == 0x23))) {
+            (packet[2] == 0xfe && packet.length >= 5 && packet[4] == 0x23)))) {
       _logLdac(
-        'TX ${packet.map((b) => b.toRadixString(16).padLeft(2, "0")).join(" ")}',
+        'TX ${packet.map((b) => b.toRadixString(16).padLeft(2, "0")).join(" ")} '
+        'via ${cmd.uuid.str128}; withoutResponse=${cmd.properties.writeWithoutResponse}',
       );
     }
     // Respect the characteristic's advertised write properties.
@@ -648,6 +681,9 @@ class BleController extends ChangeNotifier {
       packet,
       withoutResponse: cmd.properties.writeWithoutResponse,
     );
+    if (packet.length >= 3 && packet[2] == 0x23) {
+      _logLdac('Escrita GATT concluída; aceitação pelo firmware ainda não confirmada.');
+    }
   }
 
   Future<void> _sendAndRefresh(int opcode, List<int> packet) async {
@@ -710,6 +746,9 @@ class BleController extends ChangeNotifier {
     _ldacBusy = true;
     _ldacKnown = false;
     _ldacStatus = enabled ? 'Solicitando LDAC…' : 'Desativando LDAC…';
+    final rawBefore = _rawNotificationCount;
+    final parsedBefore = _parsedCommandCount;
+    var referenceRequested = false;
     _logLdac('Solicitação: LDAC ${enabled ? "ativado" : "desativado"}');
     // Arm before the write: some firmware disconnects before it returns.
     _pendingReconnect = true;
@@ -729,6 +768,13 @@ class BleController extends ChangeNotifier {
         requestSetting: () async {
           if (_session?.phase != ConnectionPhase.connected) return;
           await _send(buildRequestDataCommand(0x23));
+          if (!referenceRequested) {
+            referenceRequested = true;
+            // Read a documented HT05 setting to test the same control channel.
+            // This queries gaming mode; it does not change its value.
+            _logLdac('Consulta de referência: estado do modo jogo (0x09), sem alteração.');
+            await _send(buildRequestDataCommand(0x09));
+          }
         },
         log: _logLdac,
       );
@@ -745,6 +791,9 @@ class BleController extends ChangeNotifier {
       _logLdac('Falha: $error');
       rethrow;
     } finally {
+      _logLdac('Resumo da tentativa: '
+          '${_rawNotificationCount - rawBefore} notificações brutas; '
+          '${_parsedCommandCount - parsedBefore} comandos decodificados.');
       _ldacBusy = false;
       if (!_reconnectLoopRunning) _pendingReconnect = false;
       notifyListeners();

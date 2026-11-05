@@ -410,9 +410,11 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                         )
                       : null,
                 ),
-                if (features.ldac)
+                if (features.canRequestLdac)
                   SwitchListTile(
-                    title: const Text('LDAC — tentativa direta'),
+                    title: Text(features.ldacExperimental
+                        ? 'LDAC — teste experimental HT05'
+                        : 'LDAC'),
                     subtitle: Text(ble.ldacStatus),
                     value: s.ldac,
                     onChanged: interactive
@@ -422,12 +424,12 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                           )
                         : null,
                   ),
-                if (features.ldac && ble.ldacBusy)
+                if (features.canRequestLdac && ble.ldacBusy)
                   const Padding(
                     padding: EdgeInsets.symmetric(horizontal: 16),
                     child: LinearProgressIndicator(),
                   ),
-                if (features.ldac)
+                if (features.canRequestLdac)
                   ListTile(
                     title: const Text('Conferir codec no Android'),
                     subtitle: const Text(
@@ -436,7 +438,7 @@ class _DeviceScreenState extends ConsumerState<DeviceScreen> {
                     trailing: const Icon(Icons.open_in_new),
                     onTap: _openBluetoothSettings,
                   ),
-                if (features.ldac)
+                if (features.canRequestLdac)
                   ListTile(
                     title: const Text('Diagnóstico LDAC'),
                     subtitle: const Text(

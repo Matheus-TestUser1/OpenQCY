@@ -17,6 +17,7 @@ class ProductFeatures {
     required this.eqPresets,
     this.eq,
     this.ldac = false,
+    this.ldacExperimental = false,
     this.sleepMode = false,
     this.spatialAudio = false,
     this.inEarDetection = false,
@@ -32,6 +33,7 @@ class ProductFeatures {
   final List<String> eqPresets;
   final EqFeature? eq;
   final bool ldac;
+  final bool ldacExperimental;
   final bool sleepMode;
   final bool spatialAudio;
   final bool inEarDetection;
@@ -44,6 +46,7 @@ class ProductFeatures {
   final AutoOffTimerFeature? autoOffTimer;
 
   bool get hasKeyFunctions => keyGestures.isNotEmpty;
+  bool get canRequestLdac => ldac || ldacExperimental;
 }
 
 ProductFeatures featuresForVendor(int vendorId) {
@@ -52,7 +55,6 @@ ProductFeatures featuresForVendor(int vendorId) {
 
 const _defaultFeatures = ProductFeatures(
   eqPresets: ['Default', 'Pop', 'Rock', 'Bass'],
-  ldac: true,
   sleepMode: true,
   inEarDetection: true,
   findEarphone: true,
@@ -61,6 +63,24 @@ const _defaultFeatures = ProductFeatures(
 );
 
 const _catalog = <int, ProductFeatures>{
+  // HT05 catalog entries do not advertise LDAC. Keep the user's direct
+  // interoperability experiment available without claiming model support.
+  19777: ProductFeatures(
+    eqPresets: ['Default', 'Pop', 'Bass', 'Rock', 'Soft', 'Classic'],
+    ldacExperimental: true,
+    sleepMode: true,
+    findEarphone: true,
+    channelBalance: true,
+    deviceRename: true,
+  ),
+  19778: ProductFeatures(
+    eqPresets: ['Default', 'Pop', 'Heavy Bass', 'Rock', 'Soft', 'Classic'],
+    ldacExperimental: true,
+    sleepMode: true,
+    findEarphone: true,
+    channelBalance: true,
+    deviceRename: true,
+  ),
   meloBudsProVendorId: ProductFeatures(
     eqPresets: [
       'Spatial',
